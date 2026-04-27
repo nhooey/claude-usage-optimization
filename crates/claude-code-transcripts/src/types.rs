@@ -1061,12 +1061,17 @@ pub struct TagEntry {
     pub session_id: String,
 }
 
+/// `summary` metadata entry.
+///
+/// `sessionId` is optional: some emit paths produce summaries before a
+/// session is established (e.g. API-error responses).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SummaryEntry {
     pub leaf_uuid: String,
     pub summary: String,
-    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1407,5 +1412,40 @@ mod tests {
         }"#;
         let v: AssistantMessage = serde_json::from_str(json).unwrap();
         assert!(v.model.is_none());
+    }
+
+    /// Summary entries can omit `sessionId` (some emit paths produce them
+    /// before a session is established, e.g. API-error responses). The type
+    /// must accept the field's absence and round-trip cleanly.
+    #[test]
+    fn summary_without_session_id_parses_and_roundtrips() {
+        let json = r#"{"type":"summary","summary":"API Error: 400 Unsupported model","leafUuid":"2337d34c-b8fa-4801-a4b3-c828c152d74e"}"#;
+        let entry: Entry = serde_json::from_str(json).unwrap();
+        match &entry {
+            Entry::Summary(e) => {
+                assert_eq!(e.leaf_uuid, "2337d34c-b8fa-4801-a4b3-c828c152d74e");
+                assert_eq!(e.summary, "API Error: 400 Unsupported model");
+                assert_eq!(e.session_id, None);
+            }
+            other => panic!("expected Entry::Summary, got {other:?}"),
+        }
+
+        let raw: serde_json::Value = serde_json::from_str(json).unwrap();
+        let roundtripped: serde_json::Value = serde_json::to_value(&entry).unwrap();
+        assert_eq!(raw, roundtripped);
+    }
+
+    /// Summary entries with `sessionId` present must parse and round-trip.
+    #[test]
+    fn summary_with_session_id_parses_and_roundtrips() {
+        let json = r#"{"type":"summary","summary":"hi","leafUuid":"abc","sessionId":"sess-1"}"#;
+        let entry: Entry = serde_json::from_str(json).unwrap();
+        match &entry {
+            Entry::Summary(e) => assert_eq!(e.session_id.as_deref(), Some("sess-1")),
+            other => panic!("expected Entry::Summary, got {other:?}"),
+        }
+        let raw: serde_json::Value = serde_json::from_str(json).unwrap();
+        let roundtripped: serde_json::Value = serde_json::to_value(&entry).unwrap();
+        assert_eq!(raw, roundtripped);
     }
 }
