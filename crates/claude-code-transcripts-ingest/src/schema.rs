@@ -295,6 +295,7 @@ CREATE TABLE IF NOT EXISTS permission_mode_entries (
 CREATE TABLE IF NOT EXISTS last_prompt_entries (
     entry_id    BIGINT ,
     last_prompt TEXT,
+    leaf_uuid   TEXT,
     session_id  TEXT
 );
 

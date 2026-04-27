@@ -468,7 +468,12 @@ fn build_variant(
         Entry::LastPrompt(x) => Ok((
             Some((
                 "last_prompt_entries",
-                vec![Value::Null, s_str(&x.last_prompt), s_str(&x.session_id)],
+                vec![
+                    Value::Null,
+                    s(x.last_prompt.clone()),
+                    s(x.leaf_uuid.clone()),
+                    s_str(&x.session_id),
+                ],
             )),
             vec![],
         )),

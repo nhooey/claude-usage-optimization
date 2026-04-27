@@ -1012,10 +1012,23 @@ pub struct PermissionModeEntry {
     pub session_id: String,
 }
 
+/// `last-prompt` metadata entries.
+///
+/// The shape on disk has changed across Claude Code versions:
+///   - Older transcripts inline the prompt text:
+///       `{"type":"last-prompt","lastPrompt":"...","sessionId":"..."}`
+///   - Newer transcripts only point at the entry by leaf UUID:
+///       `{"type":"last-prompt","leafUuid":"...","sessionId":"..."}`
+///
+/// Both fields are therefore optional and `skip_serializing_if = Option::is_none`
+/// keeps round-trip equality with whichever shape produced the entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LastPromptEntry {
-    pub last_prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leaf_uuid: Option<String>,
     pub session_id: String,
 }
 
@@ -1407,5 +1420,64 @@ mod tests {
         }"#;
         let v: AssistantMessage = serde_json::from_str(json).unwrap();
         assert!(v.model.is_none());
+    }
+
+    // ── last-prompt schema-drift tests ───────────────────────────────────
+
+    /// Newer Claude Code transcripts emit `last-prompt` with a `leafUuid`
+    /// pointer instead of inlining the prompt text. Parsing must succeed
+    /// and round-trip back to the same JSON.
+    #[test]
+    fn last_prompt_new_shape_with_leaf_uuid_parses_and_roundtrips() {
+        let json = r#"{"type":"last-prompt","leafUuid":"01afe4a0-5afe-4211-925f-95aeac929838","sessionId":"ea748efd-d7e9-4275-9126-642fb1873d84"}"#;
+        let entry: Entry = serde_json::from_str(json).unwrap();
+        match &entry {
+            Entry::LastPrompt(e) => {
+                assert_eq!(e.last_prompt, None);
+                assert_eq!(
+                    e.leaf_uuid.as_deref(),
+                    Some("01afe4a0-5afe-4211-925f-95aeac929838")
+                );
+                assert_eq!(e.session_id, "ea748efd-d7e9-4275-9126-642fb1873d84");
+            }
+            other => panic!("expected Entry::LastPrompt, got {other:?}"),
+        }
+
+        let raw: serde_json::Value = serde_json::from_str(json).unwrap();
+        let roundtripped: serde_json::Value = serde_json::to_value(&entry).unwrap();
+        assert_eq!(raw, roundtripped);
+    }
+
+    /// Older Claude Code transcripts inline the prompt text in `lastPrompt`
+    /// without a `leafUuid`. Backwards compatibility: this shape must still
+    /// parse and round-trip cleanly.
+    #[test]
+    fn last_prompt_legacy_shape_with_inline_text_parses_and_roundtrips() {
+        let json = r#"{"type":"last-prompt","lastPrompt":"hello world","sessionId":"sess-123"}"#;
+        let entry: Entry = serde_json::from_str(json).unwrap();
+        match &entry {
+            Entry::LastPrompt(e) => {
+                assert_eq!(e.last_prompt.as_deref(), Some("hello world"));
+                assert_eq!(e.leaf_uuid, None);
+                assert_eq!(e.session_id, "sess-123");
+            }
+            other => panic!("expected Entry::LastPrompt, got {other:?}"),
+        }
+
+        let raw: serde_json::Value = serde_json::from_str(json).unwrap();
+        let roundtripped: serde_json::Value = serde_json::to_value(&entry).unwrap();
+        assert_eq!(raw, roundtripped);
+    }
+
+    /// Hypothetical future shape where Claude Code emits both fields at once.
+    /// We don't see this in the wild but the type should accept it without
+    /// dropping data on the round-trip.
+    #[test]
+    fn last_prompt_both_fields_present_roundtrips() {
+        let json = r#"{"type":"last-prompt","lastPrompt":"hi","leafUuid":"abc","sessionId":"sess-1"}"#;
+        let entry: Entry = serde_json::from_str(json).unwrap();
+        let raw: serde_json::Value = serde_json::from_str(json).unwrap();
+        let roundtripped: serde_json::Value = serde_json::to_value(&entry).unwrap();
+        assert_eq!(raw, roundtripped);
     }
 }
