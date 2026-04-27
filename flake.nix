@@ -110,6 +110,17 @@
               partitionType = "count";
             }
           );
+
+          # cargo-nextest is unit-test-only — doc tests need plain `cargo
+          # test --doc`. Without this check, any future ` ``` ` block in a
+          # rustdoc comment would silently skip CI.
+          cargoDoctest = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "--workspace --doc";
+            }
+          );
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
@@ -121,7 +132,10 @@
             inherit cargoArtifacts webDist;
           };
 
-          checks.cargo-test = cargoTest;
+          checks = {
+            cargo-test = cargoTest;
+            cargo-doctest = cargoDoctest;
+          };
 
           treefmt = {
             projectRootFile = "flake.nix";
