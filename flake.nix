@@ -110,6 +110,17 @@
               partitionType = "count";
             }
           );
+
+          # Clippy across the whole workspace, all targets, deny warnings.
+          # Matches the project README's documented dev workflow + the
+          # pre-commit hook; without this in CI, lint regressions land.
+          cargoClippy = craneLib.cargoClippy (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoClippyExtraArgs = "--workspace --all-targets -- -D warnings";
+            }
+          );
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
@@ -121,7 +132,10 @@
             inherit cargoArtifacts webDist;
           };
 
-          checks.cargo-test = cargoTest;
+          checks = {
+            cargo-test = cargoTest;
+            cargo-clippy = cargoClippy;
+          };
 
           treefmt = {
             projectRootFile = "flake.nix";
