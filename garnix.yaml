@@ -8,13 +8,12 @@ builds:
     - "devShells.aarch64-linux.default"
     - "devShells.x86_64-darwin.default"
     - "devShells.aarch64-darwin.default"
+    # cargoArtifacts (cached cargo deps incl. libduckdb-sys) + webDist (pre-built
+    # React viewer). Listing them here ensures Garnix populates cache.garnix.io
+    # for both, so the cargo-test sandbox check below is a cache hit on
+    # subsequent pushes that haven't touched Cargo.lock or web/.
+    - "packages.x86_64-linux.cargoArtifacts"
+    - "packages.aarch64-linux.cargoArtifacts"
+    - "packages.x86_64-linux.webDist"
+    - "packages.aarch64-linux.webDist"
   exclude: []
-
-actions:
-  # Runs `cargo test --workspace`. Wired as an Action (not a sandbox check)
-  # because claude-code-transcripts-ingest's build.rs invokes `npm ci` to
-  # build the embedded React viewer, which needs network access. duckdb-bundled
-  # compiles its vendored C++ tree from inside the action runner.
-  - on: push
-    run: cargo-test
-    withRepoContents: true

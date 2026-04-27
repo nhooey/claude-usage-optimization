@@ -20,6 +20,12 @@
     # are the single source of truth for the whole repo (cargo, clippy, rustfmt).
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+
+    # crane runs the workspace tests as a Nix sandbox check, with a cached
+    # cargoArtifacts derivation (libduckdb-sys + every other workspace
+    # dep) so the heavy C++ rebuild is fetched from cache.garnix.io on
+    # subsequent pushes instead of recompiled.
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
@@ -44,10 +50,66 @@
           # rust-toolchain.toml at the repo root.
           rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
-          # Garnix Action bodies live in ./nix/garnix.nix. Pulling them here
-          # exposes flake.apps.<system>.<name>; garnix.yaml then references
-          # them by name in its `actions:` block.
-          garnix = import ./nix/garnix.nix { inherit pkgs rustToolchain; };
+          craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rustToolchain;
+
+          # Pre-bake the embedded React viewer so the test build's build.rs
+          # can skip its `npm ci && npm run build` step (which needs network
+          # access — incompatible with a Nix sandbox check). build.rs's
+          # `SKIP_WEB_BUILD=1` branch copies a pre-staged web/dist instead
+          # of running npm.
+          webDist = pkgs.buildNpmPackage {
+            pname = "claude-code-transcripts-web";
+            version = "0.0.0";
+            src = ./crates/claude-code-transcripts-ingest/web;
+            nodejs = pkgs.nodejs_22;
+            # Hash of the npm dependency closure (content-addressed via
+            # package-lock.json). Update via the fakeHash → real-hash dance
+            # whenever package-lock.json changes.
+            npmDepsHash = "sha256-TLxGcf+S3JLcZpfB4vZd/SC//mTQwaUMCnO8cwF5eRk=";
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp -r dist/. $out/
+              runHook postInstall
+            '';
+          };
+
+          # Common args for every crane invocation. SKIP_WEB_BUILD + the
+          # postPatch web/dist staging together let the workspace build
+          # without network access in the Nix sandbox.
+          commonArgs = {
+            src = pkgs.lib.cleanSource ./.;
+            strictDeps = true;
+            nativeBuildInputs = [
+              pkgs.cmake
+              pkgs.pkg-config
+            ];
+            SKIP_WEB_BUILD = "1";
+            postPatch = ''
+              mkdir -p crates/claude-code-transcripts-ingest/web/dist
+              cp -r ${webDist}/. crates/claude-code-transcripts-ingest/web/dist/
+              chmod -R u+w crates/claude-code-transcripts-ingest/web/dist
+            '';
+          };
+
+          # Stubs out workspace crates and compiles only external deps.
+          # Cached on cache.garnix.io and reused by every cargoNextest run
+          # whose Cargo.lock matches.
+          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
+          # Workspace test runner as a Nix sandbox check. Because cargo
+          # itself drives the build inside the sandbox, fingerprints match
+          # cargoArtifacts cleanly — no fingerprint mismatch like the prior
+          # Action-based approach hit when invoking cargo with externally
+          # unpacked artifacts.
+          cargoTest = craneLib.cargoNextest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              partitions = 1;
+              partitionType = "count";
+            }
+          );
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
@@ -55,7 +117,11 @@
             overlays = [ inputs.rust-overlay.overlays.default ];
           };
 
-          inherit (garnix) apps;
+          packages = {
+            inherit cargoArtifacts webDist;
+          };
+
+          checks.cargo-test = cargoTest;
 
           treefmt = {
             projectRootFile = "flake.nix";
