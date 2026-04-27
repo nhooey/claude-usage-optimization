@@ -110,6 +110,20 @@
               partitionType = "count";
             }
           );
+
+          # Compile-check across every cargo target — including examples,
+          # benches, and integration test stubs — so a target outside
+          # cargo-nextest's view (e.g. crates/.../examples/check_all.rs)
+          # can't break silently. crane has no cargoCheck wrapper, so go
+          # through mkCargoDerivation with an explicit cargo invocation.
+          cargoCheck = craneLib.mkCargoDerivation (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              pnameSuffix = "-check";
+              buildPhaseCargoCommand = "cargo check --workspace --all-targets --locked";
+            }
+          );
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
@@ -121,7 +135,10 @@
             inherit cargoArtifacts webDist;
           };
 
-          checks.cargo-test = cargoTest;
+          checks = {
+            cargo-test = cargoTest;
+            cargo-check = cargoCheck;
+          };
 
           treefmt = {
             projectRootFile = "flake.nix";
