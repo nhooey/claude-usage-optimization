@@ -43,12 +43,19 @@
           # Single source of truth for the Rust toolchain — pinned in
           # rust-toolchain.toml at the repo root.
           rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
+          # Garnix Action bodies live in ./nix/garnix.nix. Pulling them here
+          # exposes flake.apps.<system>.<name>; garnix.yaml then references
+          # them by name in its `actions:` block.
+          garnix = import ./nix/garnix.nix { inherit pkgs rustToolchain; };
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
             inherit system;
             overlays = [ inputs.rust-overlay.overlays.default ];
           };
+
+          inherit (garnix) apps;
 
           treefmt = {
             projectRootFile = "flake.nix";
